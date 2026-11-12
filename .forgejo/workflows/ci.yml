@@ -15,12 +15,13 @@ jobs:
       GODOT_VERSION: 4.5.1
     steps:
       - uses: actions/checkout@v4
+      - uses: romaine-life/pipeline-templates/actions/check-fetches@main
       - name: Download the pinned Godot editor
         shell: bash
         run: |
           set -euo pipefail
           asset="Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
-          release="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+          release="https://artifacts.home.romaine.life/general/github/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
           curl -fsSL "$release/$asset" -o "$RUNNER_TEMP/$asset"
           curl -fsSL "$release/SHA512-SUMS.txt" -o "$RUNNER_TEMP/SHA512-SUMS.txt"
           (cd "$RUNNER_TEMP"; awk -v asset="$asset" '$2 == asset { print }' SHA512-SUMS.txt | sha512sum --check -)
