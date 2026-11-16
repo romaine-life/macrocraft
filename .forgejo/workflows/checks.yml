@@ -1,0 +1,64 @@
+name: Checks
+
+# The check no suite runs here: Godot imports the project, checks every GDScript and starts
+# the main scene headless. The docs suite checks the Markdown (pipeline-templates fleet.json).
+
+on:
+  pull_request:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check-godot:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODOT_VERSION: 4.5.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --name-only "$BASE...HEAD" | grep -qvE '\.md$|^docs/|^LICENSE$'; then echo code=true >> "$GITHUB_OUTPUT"; fi
+      # The editor is kept in the runner's tool cache, checked against Godot's SHA512 sums once.
+      - name: Godot
+        if: steps.diff.outputs.code == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+          dir="${RUNNER_TOOL_CACHE:-$HOME/.cache}/godot/${GODOT_VERSION}"
+          if [ ! -x "$dir/$asset" ]; then
+            release="https://artifacts.home.romaine.life/general/github/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+            curl -fsSL "$release/$asset.zip" -o "$RUNNER_TEMP/$asset.zip"
+            curl -fsSL "$release/SHA512-SUMS.txt" -o "$RUNNER_TEMP/SHA512-SUMS.txt"
+            (cd "$RUNNER_TEMP"; awk -v asset="$asset.zip" '$2 == asset { print }' SHA512-SUMS.txt | sha512sum --check -)
+            mkdir -p "$dir"
+            unzip -q -o "$RUNNER_TEMP/$asset.zip" -d "$dir"
+            chmod +x "$dir/$asset"
+          fi
+          echo "GODOT=$dir/$asset" >> "$GITHUB_ENV"
+      - name: Import and check every GDScript
+        if: steps.diff.outputs.code == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$GODOT" --headless --path . --import
+          while IFS= read -r -d '' script; do
+            "$GODOT" --headless --path . --check-only --script "$script"
+          done < <(git ls-files -z '*.gd')
+      - name: Start the main scene without a display
+        if: steps.diff.outputs.code == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$GODOT" --headless --path . --quit-after 2 > "$RUNNER_TEMP/godot-scene.log" 2>&1
+          cat "$RUNNER_TEMP/godot-scene.log"
+          ! grep -Eq '(^|[[:space:]])(SCRIPT ERROR|ERROR):' "$RUNNER_TEMP/godot-scene.log"
